@@ -388,5 +388,5 @@ A: 在插件配置中修改 `change\_min` 和 `change\_max` 参数。
 
 \*\*开发团队\*\*: 腾天
 
-\*\*项目仓库\*\*: \[)
+\*\*项目仓库\*\*: \[https://github.com/tengtian3/astrbot-plugin-emotionai)
 

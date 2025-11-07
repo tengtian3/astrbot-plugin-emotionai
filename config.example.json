@@ -1,0 +1,8 @@
+{
+  "session_based": false,
+  "favour_min": -100,
+  "favour_max": 100,
+  "change_min": -10,
+  "change_max": 5,
+  "admin_qq_list": ["123456", "789012"]
+}

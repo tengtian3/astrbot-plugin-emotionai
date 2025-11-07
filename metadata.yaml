@@ -13,4 +13,4 @@ help: |
   - /重置插件 - 重置插件所有数据（不包括配置）
 version: v1.1.2
 author: 腾天
-repo: 
+repo: https://github.com/tengtian3/astrbot-plugin-emotionai
