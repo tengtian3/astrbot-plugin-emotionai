@@ -149,7 +149,12 @@ class UserStateManager:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return DataMigrationManager.migrate_user_data(data)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            # 更精确地记录错误信息
+            if isinstance(e, json.JSONDecodeError):
+                logger.warning(f"JSON解析错误，可能文件格式损坏: {e}")
+            else:
+                logger.warning(f"加载数据时遇到TypeError，可能文件格式陈旧或损坏: {e}")
             return {}
     
     async def get_user_state(self, user_key: str) -> EmotionalState:
@@ -192,17 +197,18 @@ class UserStateManager:
         async with self.lock:
             self.user_data.clear()
             self.dirty_keys.clear()
-            self.force_save()
+            await self.force_save()
 
 
 class BlacklistManager:
-    """黑名单管理器"""
+    """黑名单管理器 - 修复并发安全问题"""
     
     def __init__(self, data_path: Path, favour_min: int):
         self.data_path = data_path
         self.favour_min = favour_min
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.blacklist = self._load_data("blacklist.json")
+        self.lock = asyncio.Lock()  # 添加异步锁
         
     def _load_data(self, filename: str) -> Dict[str, Any]:
         """加载黑名单数据"""
@@ -212,79 +218,88 @@ class BlacklistManager:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"加载黑名单数据失败: {e}")
             return {}
     
-    def is_user_blacklisted(self, user_key: str) -> bool:
-        """检查用户是否在黑名单中"""
-        return user_key in self.blacklist
+    async def is_user_blacklisted(self, user_key: str) -> bool:
+        """检查用户是否在黑名单中 - 异步版本"""
+        async with self.lock:
+            return user_key in self.blacklist
     
-    def add_to_blacklist(self, user_key: str, user_id: str, session_id: Optional[str], reason: str = "好感度过低"):
-        """添加用户到黑名单"""
-        self.blacklist[user_key] = {
-            "user_id": user_id,
-            "session_id": session_id,
-            "banned_at": time.time(),
-            "reason": reason
-        }
-        self._save_data()
+    async def add_to_blacklist(self, user_key: str, user_id: str, session_id: Optional[str], reason: str = "好感度过低"):
+        """添加用户到黑名单 - 异步版本"""
+        async with self.lock:
+            self.blacklist[user_key] = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "banned_at": time.time(),
+                "reason": reason
+            }
+            await self._save_data()
     
-    def remove_from_blacklist(self, user_key: str) -> bool:
-        """从黑名单中移除用户"""
-        if user_key in self.blacklist:
-            del self.blacklist[user_key]
-            self._save_data()
-            return True
-        return False
+    async def remove_from_blacklist(self, user_key: str) -> bool:
+        """从黑名单中移除用户 - 异步版本"""
+        async with self.lock:
+            if user_key in self.blacklist:
+                del self.blacklist[user_key]
+                await self._save_data()
+                return True
+            return False
     
-    def get_blacklist_details(self) -> List[Dict[str, Any]]:
-        """获取黑名单详细信息"""
-        details = []
-        for user_key, record in self.blacklist.items():
-            details.append({
-                "user_key": user_key,
-                "user_id": record.get("user_id", ""),
-                "session_id": record.get("session_id", ""),
-                "banned_at": record.get("banned_at", 0),
-                "reason": record.get("reason", "未知"),
-                "banned_time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.get("banned_at", 0)))
-            })
-        return details
+    async def get_blacklist_details(self) -> List[Dict[str, Any]]:
+        """获取黑名单详细信息 - 异步版本"""
+        async with self.lock:
+            details = []
+            for user_key, record in self.blacklist.items():
+                details.append({
+                    "user_key": user_key,
+                    "user_id": record.get("user_id", ""),
+                    "session_id": record.get("session_id", ""),
+                    "banned_at": record.get("banned_at", 0),
+                    "reason": record.get("reason", "未知"),
+                    "banned_time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.get("banned_at", 0)))
+                })
+            return details
     
-    def get_blacklist_stats(self) -> Dict[str, Any]:
-        """获取黑名单统计信息"""
-        total = len(self.blacklist)
-        recent_24h = 0
-        current_time = time.time()
-        
-        for record in self.blacklist.values():
-            if current_time - record.get("banned_at", 0) <= 24 * 3600:
-                recent_24h += 1
-        
-        return {
-            "total": total,
-            "recent_24h": recent_24h,
-            "reasons": self._get_ban_reasons()
-        }
+    async def get_blacklist_stats(self) -> Dict[str, Any]:
+        """获取黑名单统计信息 - 异步版本"""
+        async with self.lock:
+            total = len(self.blacklist)
+            recent_24h = 0
+            current_time = time.time()
+            
+            for record in self.blacklist.values():
+                if current_time - record.get("banned_at", 0) <= 24 * 3600:
+                    recent_24h += 1
+            
+            return {
+                "total": total,
+                "recent_24h": recent_24h,
+                "reasons": await self._get_ban_reasons()
+            }
     
-    def _get_ban_reasons(self) -> Dict[str, int]:
-        """统计封禁原因"""
-        reasons = {}
-        for record in self.blacklist.values():
-            reason = record.get("reason", "未知")
-            reasons[reason] = reasons.get(reason, 0) + 1
-        return reasons
+    async def _get_ban_reasons(self) -> Dict[str, int]:
+        """统计封禁原因 - 异步版本"""
+        async with self.lock:
+            reasons = {}
+            for record in self.blacklist.values():
+                reason = record.get("reason", "未知")
+                reasons[reason] = reasons.get(reason, 0) + 1
+            return reasons
     
-    def _save_data(self):
-        """保存黑名单数据"""
-        path = self.data_path / "blacklist.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.blacklist, f, ensure_ascii=False, indent=2)
+    async def _save_data(self):
+        """保存黑名单数据 - 异步版本"""
+        async with self.lock:
+            path = self.data_path / "blacklist.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.blacklist, f, ensure_ascii=False, indent=2)
     
-    def clear_all_data(self):
-        """清空所有黑名单数据"""
-        self.blacklist.clear()
-        self._save_data()
+    async def clear_all_data(self):
+        """清空所有黑名单数据 - 异步版本"""
+        async with self.lock:
+            self.blacklist.clear()
+            await self._save_data()
 
 
 class TTLCache:
@@ -374,11 +389,12 @@ class RankingManager:
         averages = []
         
         # 直接使用字典数据，避免重复查找
-        for user_key, data in self.user_state_manager.user_data.items():
-            # 直接从字典数据创建EmotionalState对象，避免重复查找
-            state = EmotionalState.from_dict(data)
-            avg = (state.favor + state.intimacy) / 2
-            averages.append((user_key, avg, state.favor, state.intimacy))
+        async with self.user_state_manager.lock:
+            for user_key, data in self.user_state_manager.user_data.items():
+                # 直接从字典数据创建EmotionalState对象，避免重复查找
+                state = EmotionalState.from_dict(data)
+                avg = (state.favor + state.intimacy) / 2
+                averages.append((user_key, avg, state.favor, state.intimacy))
         
         # 排序
         averages.sort(key=lambda x: x[1], reverse=reverse)
@@ -420,21 +436,22 @@ class RankingManager:
         if cached_result:
             return cached_result
         
-        total_users = len(self.user_state_manager.user_data)
-        total_interactions = 0
-        avg_favor = 0
-        avg_intimacy = 0
-        
-        # 直接使用字典数据，避免重复查找
-        for user_key, data in self.user_state_manager.user_data.items():
-            state = EmotionalState.from_dict(data)  # 优化：直接使用字典数据
-            total_interactions += state.interaction_count
-            avg_favor += state.favor
-            avg_intimacy += state.intimacy
-        
-        if total_users > 0:
-            avg_favor /= total_users
-            avg_intimacy /= total_users
+        async with self.user_state_manager.lock:
+            total_users = len(self.user_state_manager.user_data)
+            total_interactions = 0
+            avg_favor = 0
+            avg_intimacy = 0
+            
+            # 直接使用字典数据，避免重复查找
+            for user_key, data in self.user_state_manager.user_data.items():
+                state = EmotionalState.from_dict(data)  # 优化：直接使用字典数据
+                total_interactions += state.interaction_count
+                avg_favor += state.favor
+                avg_intimacy += state.intimacy
+            
+            if total_users > 0:
+                avg_favor /= total_users
+                avg_intimacy /= total_users
         
         stats = {
             "total_users": total_users,
@@ -541,7 +558,7 @@ class UserCommandHandler:
         """显示情感状态"""
         user_key = self.plugin._get_user_key(event)
         
-        if self.plugin.blacklist_manager.is_user_blacklisted(user_key):
+        if await self.plugin.blacklist_manager.is_user_blacklisted(user_key):
             yield event.plain_result("【黑名单】您已加入黑名单，只有重置好感才可以移出黑名单。")
             return
             
@@ -553,7 +570,7 @@ class UserCommandHandler:
         """切换状态显示开关"""
         user_key = self.plugin._get_user_key(event)
         
-        if self.plugin.blacklist_manager.is_user_blacklisted(user_key):
+        if await self.plugin.blacklist_manager.is_user_blacklisted(user_key):
             yield event.plain_result("【黑名单】您已加入黑名单，只有重置好感才可以移出黑名单。")
             return
             
@@ -651,20 +668,38 @@ class UserCommandHandler:
 
 
 class AdminCommandHandler:
-    """管理员命令处理器"""
+    """管理员命令处理器 - 修复session_based模式适配问题"""
     
     def __init__(self, plugin):
         self.plugin = plugin
     
-    async def set_favor(self, event: AstrMessageEvent, user_id: str, value: str):
-        """设置好感度"""
+    def _resolve_user_key(self, user_input: str) -> str:
+        """解析用户输入的用户标识符"""
+        if self.plugin.session_based:
+            # 在session_based模式下，期望输入完整的user_key（session_id_userid）
+            if '_' in user_input:
+                return user_input
+            else:
+                # 如果只提供了user_id，尝试查找匹配的user_key
+                # 注意：这可能会返回多个匹配项，我们取第一个
+                for user_key in self.plugin.user_manager.user_data:
+                    if user_key.endswith(f"_{user_input}"):
+                        return user_key
+                # 如果没有找到匹配项，返回原始输入
+                return user_input
+        else:
+            # 在非session_based模式下，直接使用user_id作为user_key
+            return user_input
+    
+    async def set_favor(self, event: AstrMessageEvent, user_input: str, value: str):
+        """设置好感度 - 适配session_based模式"""
         if not self.plugin._is_admin(event):
             yield event.plain_result("【错误】需要管理员权限")
             return
             
         # 跨平台兼容的用户ID验证
-        if not user_id or not user_id.strip():
-            yield event.plain_result("【错误】用户ID不能为空")
+        if not user_input or not user_input.strip():
+            yield event.plain_result("【错误】用户标识符不能为空")
             return
             
         try:
@@ -676,48 +711,51 @@ class AdminCommandHandler:
             yield event.plain_result("【错误】好感度值必须是数字")
             return
             
-        # 管理员命令操作全局状态
-        user_key = user_id
+        # 解析用户标识符
+        user_key = self._resolve_user_key(user_input)
+        
         state = await self.plugin.user_manager.get_user_state(user_key)
         state.favor = favor_value
         
         # 如果设置的好感度高于下限，从黑名单中移除
         if favor_value > self.plugin.favour_min:
-            removed = self.plugin.blacklist_manager.remove_from_blacklist(user_key)
+            removed = await self.plugin.blacklist_manager.remove_from_blacklist(user_key)
             if removed:
-                logger.info(f"管理员将用户 {user_id} 移出黑名单，好感度设置为 {favor_value}")
+                logger.info(f"管理员将用户 {user_input} 移出黑名单，好感度设置为 {favor_value}")
         
         await self.plugin.user_manager.update_user_state(user_key, state)
         
         # 更新缓存
         await self.plugin.cache.set(f"state_{user_key}", state)
         
-        yield event.plain_result(f"【成功】用户 {user_id} 的好感度已设置为 {favor_value}")
+        mode_info = "（会话模式）" if self.plugin.session_based else ""
+        yield event.plain_result(f"【成功】用户 {user_input}{mode_info} 的好感度已设置为 {favor_value}")
     
-    async def reset_favor(self, event: AstrMessageEvent, user_id: str):
-        """重置用户好感度状态"""
+    async def reset_favor(self, event: AstrMessageEvent, user_input: str):
+        """重置用户好感度状态 - 适配session_based模式"""
         if not self.plugin._is_admin(event):
             yield event.plain_result("【错误】需要管理员权限")
             return
             
-        if not user_id or not user_id.strip():
-            yield event.plain_result("【错误】用户ID不能为空")
+        if not user_input or not user_input.strip():
+            yield event.plain_result("【错误】用户标识符不能为空")
             return
             
-        # 管理员命令操作全局状态
-        user_key = user_id
+        # 解析用户标识符
+        user_key = self._resolve_user_key(user_input)
         new_state = EmotionalState()
         
         # 从黑名单中移除
-        removed = self.plugin.blacklist_manager.remove_from_blacklist(user_key)
+        removed = await self.plugin.blacklist_manager.remove_from_blacklist(user_key)
         
         await self.plugin.user_manager.update_user_state(user_key, new_state)
         
         # 更新缓存
         await self.plugin.cache.set(f"state_{user_key}", new_state)
         
+        mode_info = "（会话模式）" if self.plugin.session_based else ""
         action_text = "并移出黑名单" if removed else ""
-        yield event.plain_result(f"【成功】用户 {user_id} 的好感度状态已完全重置{action_text}")
+        yield event.plain_result(f"【成功】用户 {user_input}{mode_info} 的好感度状态已完全重置{action_text}")
     
     async def reset_plugin(self, event: AstrMessageEvent):
         """重置插件所有数据"""
@@ -727,7 +765,7 @@ class AdminCommandHandler:
             
         # 重置所有数据
         await self.plugin.user_manager.clear_all_data()
-        self.plugin.blacklist_manager.clear_all_data()
+        await self.plugin.blacklist_manager.clear_all_data()
         await self.plugin.cache.clear()
         
         logger.info("管理员执行了插件重置操作")
@@ -741,8 +779,8 @@ class AdminCommandHandler:
             return
             
         # 获取详细黑名单信息
-        blacklist_details = self.plugin.blacklist_manager.get_blacklist_details()
-        stats = self.plugin.blacklist_manager.get_blacklist_stats()
+        blacklist_details = await self.plugin.blacklist_manager.get_blacklist_details()
+        stats = await self.plugin.blacklist_manager.get_blacklist_stats()
         
         if not blacklist_details:
             yield event.plain_result("【黑名单统计】当前黑名单为空")
@@ -762,7 +800,7 @@ class AdminCommandHandler:
             user_id = detail['user_id']
             session_info = f" (会话: {detail['session_id']})" if detail['session_id'] else ""
             response_lines.append(
-                f"{i}. QQ: {user_id}{session_info}\n"
+                f"{i}. 用户标识: {detail['user_key']}\n"
                 f"   原因: {detail['reason']}\n"
                 f"   封禁时间: {detail['banned_time_str']}"
             )
@@ -777,26 +815,27 @@ class AdminCommandHandler:
             
         yield event.plain_result("\n".join(response_lines))
     
-    async def view_favor(self, event: AstrMessageEvent, user_id: str):
-        """管理员查看指定用户的好感状态"""
+    async def view_favor(self, event: AstrMessageEvent, user_input: str):
+        """管理员查看指定用户的好感状态 - 适配session_based模式"""
         if not self.plugin._is_admin(event):
             yield event.plain_result("【错误】需要管理员权限")
             return
             
-        if not user_id or not user_id.strip():
-            yield event.plain_result("【错误】用户ID不能为空")
+        if not user_input or not user_input.strip():
+            yield event.plain_result("【错误】用户标识符不能为空")
             return
         
-        # 管理员查看全局状态
-        user_key = user_id
+        # 解析用户标识符
+        user_key = self._resolve_user_key(user_input)
         state = await self.plugin.user_manager.get_user_state(user_key)
         
         # 检查是否在黑名单中
-        is_blacklisted = self.plugin.blacklist_manager.is_user_blacklisted(user_key)
+        is_blacklisted = await self.plugin.blacklist_manager.is_user_blacklisted(user_key)
         
         response_lines = [
-            f"【用户 {user_id} 情感状态】",
+            f"【用户 {user_input} 情感状态】",
             "==================",
+            f"用户标识: {user_key}",
             f"黑名单状态: {'是' if is_blacklisted else '否'}",
             f"好感度: {state.favor} | 亲密度: {state.intimacy}",
             f"关系: {state.relationship} | 态度: {state.attitude}",
@@ -865,7 +904,7 @@ class EmotionAIPlugin(Star):
         # 自动保存任务
         self.auto_save_task = asyncio.create_task(self._auto_save_loop())
         
-        logger.info("EmotionAI 插件初始化完成 - 改进版本")
+        logger.info("EmotionAI 插件初始化完成 - 修复并发安全问题版本")
         
     def _validate_and_init_config(self):
         """验证配置并初始化配置参数"""
@@ -1009,7 +1048,7 @@ class EmotionAIPlugin(Star):
         user_key = self._get_user_key(event)
         
         # 检查用户是否在黑名单中 - 直接拦截请求
-        if self.blacklist_manager.is_user_blacklisted(user_key):
+        if await self.blacklist_manager.is_user_blacklisted(user_key):
             # 完全清空原有提示，直接返回黑名单消息
             req.prompt = ""
             req.system_prompt = "您已加入黑名单，只有重置好感才可以移出黑名单。"
@@ -1057,7 +1096,7 @@ class EmotionAIPlugin(Star):
         user_key = self._get_user_key(event)
         
         # 再次检查黑名单状态（防止在情感更新过程中被加入黑名单）
-        if self.blacklist_manager.is_user_blacklisted(user_key):
+        if await self.blacklist_manager.is_user_blacklisted(user_key):
             resp.completion_text = "您已加入黑名单，只有重置好感才可以移出黑名单。"
             logger.info(f"用户 {user_key} 在黑名单中，已覆盖LLM响应")
             return
@@ -1077,9 +1116,9 @@ class EmotionAIPlugin(Star):
         self._update_interaction_stats(state, emotion_updates)
         
         # 检查黑名单条件 - 只有在状态确实变化时才检查
-        if state.favor <= self.favour_min and not self.blacklist_manager.is_user_blacklisted(user_key):
+        if state.favor <= self.favour_min and not await self.blacklist_manager.is_user_blacklisted(user_key):
             logger.info(f"用户 {user_key} 好感度 {state.favor} 低于阈值 {self.favour_min}，加入黑名单")
-            self.blacklist_manager.add_to_blacklist(
+            await self.blacklist_manager.add_to_blacklist(
                 user_key, 
                 event.get_sender_id(), 
                 self._get_session_id(event)
@@ -1088,7 +1127,7 @@ class EmotionAIPlugin(Star):
             resp.completion_text = "您已加入黑名单，只有重置好感才可以移出黑名单。"
         
         # 保存状态（只有在没有进入黑名单的情况下）
-        if not self.blacklist_manager.is_user_blacklisted(user_key):
+        if not await self.blacklist_manager.is_user_blacklisted(user_key):
             await self.user_manager.update_user_state(user_key, state)
             
             # 更新缓存
@@ -1228,14 +1267,14 @@ class EmotionAIPlugin(Star):
         return event.role == "admin" or event.get_sender_id() in self.admin_qq_list
         
     @filter.command("设置好感")
-    async def admin_set_favor(self, event: AstrMessageEvent, user_id: str, value: str):
+    async def admin_set_favor(self, event: AstrMessageEvent, user_input: str, value: str):
         """设置好感度"""
-        return self.admin_commands.set_favor(event, user_id, value)
+        return self.admin_commands.set_favor(event, user_input, value)
         
     @filter.command("重置好感")
-    async def admin_reset_favor(self, event: AstrMessageEvent, user_id: str):
+    async def admin_reset_favor(self, event: AstrMessageEvent, user_input: str):
         """重置用户好感度状态"""
-        return self.admin_commands.reset_favor(event, user_id)
+        return self.admin_commands.reset_favor(event, user_input)
         
     @filter.command("重置插件")
     async def admin_reset_plugin(self, event: AstrMessageEvent):
@@ -1248,9 +1287,9 @@ class EmotionAIPlugin(Star):
         return self.admin_commands.blacklist_stats(event)
     
     @filter.command("查看好感")
-    async def admin_view_favor(self, event: AstrMessageEvent, user_id: str):
+    async def admin_view_favor(self, event: AstrMessageEvent, user_input: str):
         """管理员查看指定用户的好感状态"""
-        return self.admin_commands.view_favor(event, user_id)
+        return self.admin_commands.view_favor(event, user_input)
         
     @filter.command("备份数据")
     async def admin_backup_data(self, event: AstrMessageEvent):
