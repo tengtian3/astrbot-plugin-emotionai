@@ -14,6 +14,6 @@ help: |
   - /查看好感 <用户ID> - 查看指定用户的情感状态
   - /重置插件 - 重置插件所有数据（不包括配置）
   - /备份数据 - 备份插件数据
-version: v2.1.1
+version: v2.2.0
 author: 腾天
 repo: https://github.com/tengtian3/astrbot-plugin-emotionai

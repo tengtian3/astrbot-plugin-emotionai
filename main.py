@@ -672,7 +672,7 @@ class AdminCommandHandler:
 
 # ==================== 主插件类 ====================
 
-@register("EmotionAI", "腾天", "高级情感智能交互系统 v2.1", "2.1.1")
+@register("EmotionAI", "腾天", "高级情感智能交互系统 v2.2", "2.2.0")
 class EmotionAIPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -704,7 +704,7 @@ class EmotionAIPlugin(Star):
         # 自动保存任务
         self.auto_save_task = asyncio.create_task(self._auto_save_loop())
         
-        logger.info("EmotionAI 插件初始化完成 - 简化版")
+        logger.info(f"EmotionAI 插件初始化完成 - 优先级版本 (优先级: {self.plugin_priority})")
         
     def _validate_and_init_config(self):
         """验证配置并初始化配置参数"""
@@ -746,6 +746,12 @@ class EmotionAIPlugin(Star):
         # 清理无效的管理员QQ号
         self.admin_qq_list = [qq for qq in self.admin_qq_list if qq is not None]
         
+        # 验证插件优先级
+        self.plugin_priority = self.config.get("plugin_priority", 100000)
+        if not isinstance(self.plugin_priority, int) or self.plugin_priority < 0:
+            errors.append("插件优先级必须是一个正整数")
+            self.plugin_priority = 100000
+        
         # 记录配置错误
         if errors:
             error_msg = "配置验证警告:\n" + "\n".join(f"• {error}" for error in errors)
@@ -754,7 +760,8 @@ class EmotionAIPlugin(Star):
         logger.info(f"配置加载完成: session_based={self.session_based}, "
                    f"favour_range=[{self.favour_min}, {self.favour_max}], "
                    f"change_range=[{self.change_min}, {self.change_max}], "
-                   f"admin_count={len(self.admin_qq_list)}")
+                   f"admin_count={len(self.admin_qq_list)}, "
+                   f"priority={self.plugin_priority}")
         
     async def _auto_save_loop(self):
         """自动保存循环"""
@@ -839,23 +846,31 @@ class EmotionAIPlugin(Star):
     
     # ==================== LLM集成 ====================
     
-    @filter.on_llm_request()
+    @filter.on_llm_request(priority=100000)
     async def inject_emotional_context(self, event: AstrMessageEvent, req: ProviderRequest):
-        """注入情感上下文"""
+        """注入情感上下文 - 高优先级确保先执行"""
+        logger.debug(f"[EmotionAI] 开始处理LLM请求 - 优先级: {self.plugin_priority}")
+        
         user_key = self._get_user_key(event)
+        logger.debug(f"[EmotionAI] 用户标识: {user_key}")
         
         # 从缓存获取状态或从管理器获取
         state = await self.cache.get(f"state_{user_key}")
         if state is None:
+            logger.debug(f"[EmotionAI] 缓存未命中，从管理器获取状态")
             state = await self.user_manager.get_user_state(user_key)
             await self.cache.set(f"state_{user_key}", state)
+        else:
+            logger.debug(f"[EmotionAI] 缓存命中，使用缓存状态")
         
         # 构建增强的情感上下文
         emotional_context = self._build_emotional_context(state)
         req.system_prompt += f"\n{emotional_context}"
         
+        logger.debug(f"[EmotionAI] 已注入情感上下文到LLM请求")
+        
     def _build_emotional_context(self, state: EmotionalState) -> str:
-        """构建情感上下文"""
+        """构建情感上下文 - 增强版提示词"""
         profile = self.analyzer.get_emotional_profile(state)
         
         return f"""
@@ -866,32 +881,63 @@ class EmotionAIPlugin(Star):
 主导情感：{profile['dominant_emotion']} (强度：{profile['emotion_intensity']}%)
 
 【情感响应指导】
-请根据以上情感状态调整你的回应风格和语气。
+请根据对话内容和当前情感状态调整你的回应风格和语气。如果对话让你感到：
+- 开心/愉快：适当增加 joy (1-3)
+- 信任/安心：适当增加 trust (1-2)  
+- 惊讶：适当增加 surprise (1-2)
+- 期待：适当增加 anticipation (1-2)
+- 不开心：适当增加 sadness (1-2)
+- 生气：适当增加 anger (1-2)
+- 害怕：适当增加 fear (1-2)
+- 厌恶：适当增加 disgust (1-2)
 
 【情感更新机制】
-在回复中可以使用以下格式更新情感状态：
-[情感更新: 情感1:数值, 情感2:数值, ...]
-可用维度：joy, trust, fear, surprise, sadness, disgust, anger, anticipation, favor, intimacy
+在回复的末尾使用以下格式更新情感状态（只在情感确实变化时使用）：
+[情感更新: joy:1, trust:1, favor:2]
+
+可用维度：
+- 基础情感: joy, trust, fear, surprise, sadness, disgust, anger, anticipation
+- 关系状态: favor, intimacy
+
 变化范围：{self.change_min} 到 {self.change_max}
-注意：只有在情感确实发生变化时才需要更新
+示例：如果对话让你感到开心和信任，可以写：[情感更新: joy:2, trust:1]
+
+【重要提示】
+请务必在每次回复时考虑是否需要更新情感状态，即使是很小的变化也值得记录。
+这有助于建立更真实、更连贯的情感连接。情感更新应该反映你对当前对话的真实感受。
 """
     
-    @filter.on_llm_response()
+    @filter.on_llm_response(priority=100000)
     async def process_emotional_update(self, event: AstrMessageEvent, resp: LLMResponse):
-        """处理情感更新"""
+        """处理情感更新 - 高优先级确保先执行"""
+        logger.debug(f"[EmotionAI] 开始处理LLM响应 - 优先级: {self.plugin_priority}")
+        
         user_key = self._get_user_key(event)
+        logger.debug(f"[EmotionAI] 用户标识: {user_key}")
             
         original_text = resp.completion_text
+        
+        # 详细调试日志：记录原始响应
+        logger.debug(f"[EmotionAI] 用户 {user_key} 的LLM原始响应: '{original_text}'")
+        
         emotion_updates = self._parse_emotion_updates(original_text)
+        
+        # 详细调试日志：记录解析过程
+        logger.debug(f"[EmotionAI] 开始解析情感更新，原始文本: '{original_text}'")
+        logger.debug(f"[EmotionAI] 用户 {user_key} 的情感更新解析结果: {emotion_updates}")
         
         # 清理回复文本
         if emotion_updates:
             emotion_block = self.emotion_pattern.search(original_text)
             if emotion_block:
                 resp.completion_text = original_text.replace(emotion_block.group(0), '').strip()
+                logger.debug(f"[EmotionAI] 用户 {user_key} 已清理情感更新标记: {emotion_block.group(0)}")
+                logger.debug(f"[EmotionAI] 清理后的响应文本: '{resp.completion_text}'")
         
         # 更新情感状态
         state = await self.user_manager.get_user_state(user_key)
+        logger.debug(f"[EmotionAI] 用户 {user_key} 的当前状态: 好感度={state.favor}, 亲密度={state.intimacy}")
+        
         self._apply_emotion_updates(state, emotion_updates)
         self._update_interaction_stats(state, emotion_updates)
         
@@ -901,10 +947,20 @@ class EmotionAIPlugin(Star):
         # 更新缓存
         await self.cache.set(f"state_{user_key}", state)
         
+        # 详细调试日志：记录状态变化
+        if emotion_updates:
+            logger.info(f"[EmotionAI] 用户 {user_key} 情感状态已更新: {emotion_updates}")
+            logger.debug(f"[EmotionAI] 用户 {user_key} 更新后状态: 好感度={state.favor}, 亲密度={state.intimacy}")
+        else:
+            logger.debug(f"[EmotionAI] 用户 {user_key} 本次对话无情感更新")
+        
         # 添加状态显示（如果启用）
         if state.show_status and emotion_updates:
             status_text = f"\n\n{self._format_emotional_state(state)}"
             resp.completion_text += status_text
+            logger.debug(f"[EmotionAI] 用户 {user_key} 已添加状态显示")
+            
+        logger.debug(f"[EmotionAI] LLM响应处理完成")
             
     def _parse_emotion_updates(self, text: str) -> Dict[str, int]:
         """解析情感更新"""
@@ -912,8 +968,10 @@ class EmotionAIPlugin(Star):
         emotion_match = self.emotion_pattern.search(text)
         
         if emotion_match:
+            logger.debug(f"[EmotionAI] 找到情感更新标记: {emotion_match.group(0)}")
             emotion_content = emotion_match.group(1)
             single_matches = self.single_emotion_pattern.findall(emotion_content)
+            logger.debug(f"[EmotionAI] 情感更新内容匹配结果: {single_matches}")
             
             for emotion, value in single_matches:
                 try:
@@ -925,8 +983,12 @@ class EmotionAIPlugin(Star):
                             min(self.change_max, change_value)
                         )
                     emotion_updates[emotion.lower()] = change_value
+                    logger.debug(f"[EmotionAI] 解析到情感更新: {emotion}={change_value}")
                 except ValueError:
+                    logger.debug(f"[EmotionAI] 情感值解析失败: {emotion}={value}")
                     continue
+        else:
+            logger.debug(f"[EmotionAI] 未找到情感更新标记")
                     
         return emotion_updates
         
@@ -939,6 +1001,7 @@ class EmotionAIPlugin(Star):
             if attr in updates:
                 new_value = getattr(state, attr) + updates[attr]
                 setattr(state, attr, max(0, min(100, new_value)))
+                logger.debug(f"[EmotionAI] 更新基础情感 {attr}: {getattr(state, attr) - updates[attr]} -> {getattr(state, attr)}")
         
         for attr in state_attrs:
             if attr in updates:
@@ -950,11 +1013,13 @@ class EmotionAIPlugin(Star):
                     ))
                 else:
                     setattr(state, attr, max(0, min(100, new_value)))
+                logger.debug(f"[EmotionAI] 更新状态 {attr}: {getattr(state, attr) - updates[attr]} -> {getattr(state, attr)}")
         
     def _update_interaction_stats(self, state: EmotionalState, updates: Dict[str, int]):
         """更新互动统计"""
         state.interaction_count += 1
         state.last_interaction = time.time()
+        logger.debug(f"[EmotionAI] 更新互动统计: 次数={state.interaction_count}")
         
         # 判断互动性质
         if updates:
@@ -973,14 +1038,20 @@ class EmotionAIPlugin(Star):
             
             if positive_emotions > negative_emotions:
                 state.positive_interactions += 1
+                logger.debug(f"[EmotionAI] 记录正面互动")
             elif negative_emotions > positive_emotions:
                 state.negative_interactions += 1
+                logger.debug(f"[EmotionAI] 记录负面互动")
         else:
             # 如果没有情感更新，认为是中性互动
+            logger.debug(f"[EmotionAI] 记录中性互动")
             pass
         
         # 更新关系状态
+        old_relationship = state.relationship
         state.relationship = self._calculate_relationship_level(state)
+        if old_relationship != state.relationship:
+            logger.debug(f"[EmotionAI] 关系状态变化: {old_relationship} -> {state.relationship}")
     
     # ==================== 用户命令 ====================
     

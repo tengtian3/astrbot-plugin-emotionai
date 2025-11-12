@@ -34,5 +34,11 @@
         "type": "list",
         "default": [],
         "hint": "在此列表中的QQ号可以使用管理员命令"
+    },
+    "plugin_priority": {
+        "description": "插件处理优先级",
+        "type": "int",
+        "default": 100000,
+        "hint": "设置插件处理消息的优先级（数字越大越先执行，建议调高避免被其他插件干扰）"
     }
 }
