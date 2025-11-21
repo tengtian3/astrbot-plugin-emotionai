@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="./logo.png" width="200" height="200" alt="EmotionAI Logo">
+  <img src="./logo.png" width="500" height="500" alt="EmotionAI Logo">
   <br>
 
   ![:name](https://count.getloli.com/@astrbot_plugin_emotionai?name=astrbot_plugin_emotionai&theme=minecraft&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
@@ -150,4 +150,5 @@ Bot 会根据**亲密度**和**当前态度**自动定义你们的关系：
   Made with ❤️ by <a href="https://github.com/tengtian3"><strong>腾天</strong></a>
   <br>
   © 2025 EmotionAI Project
+
 </div>
