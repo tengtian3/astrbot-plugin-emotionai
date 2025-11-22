@@ -9,7 +9,7 @@
         "description": "好感度最小值",
         "type": "int",
         "default": -100,
-        "hint": "设置好感度的最低值"
+        "hint": "达到此值时，用户将被自动拉入黑名单"
     },
     "favour_max": {
         "description": "好感度最大值",
@@ -18,27 +18,27 @@
         "hint": "设置好感度的最高值"
     },
     "change_min": {
-        "description": "好感度单次变化最小值",
+        "description": "单次情感变化最小值",
         "type": "int",
         "default": -10,
-        "hint": "设置好感度单次减少的最大值"
+        "hint": "限制 LLM 单次扣分上限"
     },
     "change_max": {
-        "description": "好感度单次变化最大值",
+        "description": "单次情感变化最大值",
         "type": "int",
         "default": 5,
-        "hint": "设置好感度单次增加的最大值"
+        "hint": "限制 LLM 单次加分上限"
     },
     "admin_qq_list": {
-        "description": "管理员QQ号列表",
+        "description": "管理员QQ列表",
         "type": "list",
         "default": [],
         "hint": "在此列表中的QQ号可以使用管理员命令"
     },
     "plugin_priority": {
-        "description": "插件处理优先级",
+        "description": "插件优先级",
         "type": "int",
         "default": 100000,
-        "hint": "设置插件处理消息的优先级（数字越大越先执行，建议调高避免被其他插件干扰）"
+        "hint": "建议保持高优先级，以便先于其他插件处理情感拦截"
     }
 }
