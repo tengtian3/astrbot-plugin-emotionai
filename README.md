@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="./logo.png" width="180" height="180" alt="EmotionAI Logo" style="border-radius: 50%; box-shadow: 0 0 20px rgba(0,0,0,0.2);">
+  <img src="./logo.png" width="500" height="500" alt="EmotionAI Logo" style="border-radius: 50%; box-shadow: 0 0 20px rgba(0,0,0,0.2);">
   <br>
 
   ![:name](https://count.getloli.com/@astrbot_plugin_emotionai?name=astrbot_plugin_emotionai&theme=minecraft&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
@@ -205,6 +205,7 @@ v1.0.0：初版发布，基于 Plutchik 情感轮的基础模型，实现基本�
 
 
 Made with ❤️ by <a href="https://github.com/tengtian3"><strong>腾天</strong></a>
+
 
 
 © 2025 EmotionAI Project </div>
