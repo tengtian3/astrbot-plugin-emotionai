@@ -7,7 +7,7 @@
 
 # EmotionAI (情感智能)
 
-_✨ 搭载 v3.3「认知共鸣引擎」：会思考、会记仇、有灵魂的数字生命 ✨_
+_✨ 搭载 v3.4「认知共鸣引擎」：会思考、会记仇、有灵魂的数字生命 ✨_
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
@@ -246,25 +246,22 @@ history_clean_pattern = r"(?:```(?:xml|text)?\s*)?<(?:thought|thinking)>[\s\S]*?
 
 ## 📅 版本历史 | Version History
 
-<details open> 
-<summary><strong>🚀 v3.3.3 - 三重突破 (Triple Breakthrough)</strong></summary>
+<details open> <summary><strong>🔥 v3.4 - 稳定性重构与防呆优化 (Current)</strong></summary>
+强制思维链注入：引入 "Protocol Enforcement" 机制，通过伪装底层协议握手，强制 Gemini 等强对齐模型输出 <thought> 标签，突破安全限制。
 
-**思维可视化**：引入用户可控的思维链显示，可窥见AI完整思考过程
+代谢平衡系统：实现负面情感消解和激情冷却机制，情感数值动态平衡。
 
-**三重情感混合**：从双情感升级为三层情感深度混合，实现更自然的情感表达
+拟态防御机制：多层级历史净化，彻底根除AI模仿输出历史面板和思维链标签的Bug。
 
-**智能历史净化**：革命性的多格式上下文清洗，彻底解决记忆污染问题
+变化幅度限制：智能截断单次情感变化，防止数值剧烈波动。
 
-**缓存系统升级**：TTL自动过期 + 容量控制 + 性能统计，大幅提升响应速度
+增强正则系统：支持中英文冒号的情感更新解析，兼容性大幅提升。
 
-**架构优化**：增强正则匹配，支持字典/字符串双格式处理，改进数据迁移管理器
+调试日志增强：详细记录思维链提取和情感更新过程，便于问题排查。
 
-**用户体验**：心理显示开关、缓存统计、更精准的情感更新解析
+稳定性重构：数据迁移管理器升级，缓存系统优化，整体稳定性显著提升。
 
-</details>
-
-<details> 
-<summary><strong>🚀 v3.0.1 - 认知觉醒 (The Awakening)</strong></summary>
+</details><details> <summary><strong>🚀 v3.3.3 - 思维可视化 (Thought Visualization)</strong></summary>
 
 认知共鸣引擎：正式实装思维链机制，AI在回复前进行显式心理推理
 

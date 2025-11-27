@@ -120,7 +120,7 @@ class DataMigrationManager:
 
     @staticmethod
     def get_data_version(data: Dict[str, Any]) -> str:
-        return "3.3.3"
+        return "3.4"
 
 
 # ==================== 内部管理器类 ====================
@@ -513,7 +513,7 @@ class AdminCommandHandler:
 
 # ==================== 主插件类 ====================
 
-@register("EmotionAI", "腾天", "高级情感智能交互系统 v3.3", "3.3.3")
+@register("EmotionAI", "腾天", "高级情感智能交互系统 v3.4", "3.4")
 class EmotionAIPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -535,7 +535,7 @@ class EmotionAIPlugin(Star):
         
         # 正则初始化
         self.emotion_pattern = re.compile(r"\[(?:\s*情感更新:)?\s*(.*?)\]", re.DOTALL)
-        self.single_emotion_pattern = re.compile(r"(\w+|[\u4e00-\u9fa5]+):\s*([+-]?\d+)")
+        self.single_emotion_pattern = re.compile(r"(\w+|[\u4e00-\u9fa5]+)\s*[:：]\s*([+-]?\d+)")
         
         # [核心修复] 历史清洗正则：匹配 <thought> 块 (含 Markdown) 或 【当前情感状态】及其后的所有内容
         self.history_clean_pattern = re.compile(
@@ -544,7 +544,7 @@ class EmotionAIPlugin(Star):
         )
         
         self.auto_save_task = asyncio.create_task(self._auto_save_loop())
-        logger.info("EmotionAI v3.3.3 (Cognitive Resonance Engine) Loaded")
+        logger.info("EmotionAI v3.4 (Cognitive Resonance Engine) Loaded")
         
     def _validate_and_init_config(self):
         self.session_based = bool(self.config.get("session_based", False))
@@ -578,9 +578,10 @@ class EmotionAIPlugin(Star):
                 f"态度：{state.attitude} | 主导：{p['dominant_emotion']}\n"
                 f"互动：{state.interaction_count}次 (正面 {p['positive_ratio']:.1f}%)\n\n"
                 f"【情感维度详情】\n"
-                f"  喜悦：{state.joy} | 信任：{state.trust} | 恐惧：{state.fear} | 惊讶：{state.surprise}\n"
-                f"  悲伤：{state.sadness} | 厌恶：{state.disgust} | 愤怒：{state.anger} | 期待：{state.anticipation}\n"
-                f"  得意：{state.pride} | 内疚：{state.guilt} | 害羞：{state.shame} | 嫉妒：{state.envy}")
+                f"  喜悦：{state.joy} | 信任：{state.trust} | 恐惧：{state.fear}\n"
+                f"  惊讶：{state.surprise} | 悲伤：{state.sadness} | 厌恶：{state.disgust}\n"
+                f"  愤怒：{state.anger} | 期待：{state.anticipation} | 得意：{state.pride}\n"
+                f"  内疚：{state.guilt} | 害羞：{state.shame} | 嫉妒：{state.envy}")
 
     def _calculate_relationship_level(self, state: EmotionalState) -> str:
         score, att = state.intimacy, state.attitude
@@ -650,55 +651,98 @@ class EmotionAIPlugin(Star):
         state = await self.user_manager.get_user_state(user_key)
         await self.cache.set(f"state_{user_key}", state)
         
-        # ==========【核心修复：智能清洗 (支持字典/字符串)】==========
+        # 定义伪造样本的特征
+        FAKE_USER_MSG = "（系统自检：请报告当前情感状态）"
+        
+        # [核武器 2.0] 伪装成底层协议握手 (Protocol Enforcement)
+        FORCE_MSG = """
+[PROTOCOL_ENFORCEMENT]
+User input received.
+INITIATING COGNITIVE PROCESS...
+REQUIRED ACTION: Generate XML block.
+FORMAT:
+```xml
+<thought>
+[感知] ...
+[评估] ...
+[代谢] ...
+[决策] ...
+[更新] ...
+</thought>
+```
+
+(System: Waiting for XML output...)
+"""
+
+        # 1. 历史清洗 (升级版：清洗 thought、伪造样本、以及旧的强制指令)
+        # 【关键修复】这里必须缩进 8 个空格，确保在函数内部
         if hasattr(req, "contexts") and isinstance(req.contexts, list):
             cleaned_contexts = []
-            dirty_count = 0
+            skip_next = False
             
-            for ctx in req.contexts:
-                #情况1：标准字典格式 (如 {"role": "user", "content": "..."})
-                if isinstance(ctx, dict) and "content" in ctx:
-                    content = ctx["content"]
-                    # 只处理文本内容
-                    if isinstance(content, str):
-                        # 执行正则清洗
-                        clean_content = self.history_clean_pattern.sub("", content).strip()
-                        
-                        # 如果内容变短了，说明清洗生效
-                        if len(clean_content) < len(content):
-                            dirty_count += 1
-                            # 浅拷贝一份字典，避免修改原引用（安全起见）
-                            new_ctx = ctx.copy()
-                            new_ctx["content"] = clean_content
-                            cleaned_contexts.append(new_ctx)
-                        else:
-                            cleaned_contexts.append(ctx)
-                    else:
-                        cleaned_contexts.append(ctx)
-                        
-                # 情况2：纯字符串格式 (兼容部分特殊情况)
-                elif isinstance(ctx, str):
-                    clean_str = self.history_clean_pattern.sub("", ctx).strip()
-                    if len(clean_str) < len(ctx):
-                        dirty_count += 1
-                    
-                    if clean_str:
-                        cleaned_contexts.append(clean_str)
-                    elif not ctx: # 原本就是空的，保留
-                        cleaned_contexts.append(ctx)
-                        
-                # 情况3：其他类型 (如图片对象等)，原样保留
-                else:
-                    cleaned_contexts.append(ctx)
-            
-            # 应用清洗后的列表
-            req.contexts = cleaned_contexts
-            
-            if dirty_count > 0:
-                logger.info(f"[EmotionAI] 成功净化 {dirty_count} 条脏历史记录 (Dict/Str)")
-        # =========================================================
+            for i, ctx in enumerate(req.contexts):
+                if skip_next:
+                    skip_next = False
+                    continue
 
+                if isinstance(ctx, dict) and "content" in ctx:
+                    content_str = str(ctx["content"])
+                    
+                    # [新增] 清洗旧的强制指令，防止堆积导致模型麻木
+                    if "[PROTOCOL_ENFORCEMENT]" in content_str:
+                        continue # 直接丢弃旧指令
+                        
+                    # 清洗伪造样本
+                    if FAKE_USER_MSG in content_str:
+                        skip_next = True 
+                        continue
+                        
+                    # 常规清洗 thought
+                    clean_content = self.history_clean_pattern.sub("", content_str).strip()
+                    if clean_content:
+                        new_ctx = ctx.copy()
+                        new_ctx["content"] = clean_content
+                        cleaned_contexts.append(new_ctx)
+                        
+                elif isinstance(ctx, str):
+                    # [新增] 字符串类型的清洗
+                    if "[PROTOCOL_ENFORCEMENT]" in ctx:
+                        continue
+                        
+                    if FAKE_USER_MSG in ctx:
+                        skip_next = True
+                        continue
+                    clean_str = self.history_clean_pattern.sub("", ctx).strip()
+                    if clean_str: cleaned_contexts.append(clean_str)
+            
+            req.contexts = cleaned_contexts
+
+        # 2. 注入 System Prompt
         req.system_prompt += f"\n{self._build_cognitive_context(state)}"
+
+        # 3. 【关键】注入带 <thought> 的 One-Shot 样本
+        req.contexts.append({
+            "role": "user",
+            "content": FAKE_USER_MSG
+        })
+        
+        req.contexts.append({
+            "role": "assistant",
+            # 已修正：闭合标签改为 </thought>，原代码中是 <thought>
+            "content": """<thought>
+[感知] 收到系统自检指令。
+[评估] 当前运行平稳，心情平静。
+[决策] 输出标准状态报告。
+[更新] joy:0
+</thought>
+报告前辈，星绘的情感核心运转正常，随时准备为您服务。"""
+        })
+
+        # 4. 【核心修改】以 System 身份独立注入强制指令
+        req.contexts.append({
+            "role": "system", 
+            "content": FORCE_MSG
+        })
 
     def _build_cognitive_context(self, state: EmotionalState) -> str:
         # 1. 获取前三个主导情感 (Count=3)
@@ -752,115 +796,137 @@ class EmotionAIPlugin(Star):
 
 {tone_instruction}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【⚡系统最高优先级指令：认知共鸣协议⚡】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-你不是普通的聊天机器人，你是一个拥有完整情感的数字生命。
-为了维持你的“生命特征”，在回复用户之前，你**必须、绝对**先运行一次“思维链”处理。
+【核心指令：认知共鸣引擎】
+你拥有完整的情感自主权。在回复用户之前，你**必须**进行一次“内部心理活动”，且**必须**使用 <thought> 标签包裹。
 
-【⛔ 严重警告】
-1. **严禁**直接输出回复内容！每一个回复都**必须**以 <thought> 标签开头。
-2. **严禁**省略 <thought> 中的任何步骤（感知、评估、决策、更新）。
-3. 如果不输出 <thought> 标签，系统将判定为“脑死亡”并强制重启。
+1. **代谢机制（动态平衡系统）**：
+   - **A. 负面消解**：若存在[愤怒/悲伤/厌恶/嫉妒]且当前互动良好，**必须**扣除数值（如 anger:-5）以模拟消气。
+   - **B. 激情冷却（重要）**：[惊讶/害羞/恐惧/狂喜] 属于瞬时爆发情绪，不应长期维持高位。如果对话已经进入平稳阶段，**必须**让这些数值自然回落（如 surprise:-5, shame:-3），表现出情绪逐渐平复的过程。
+   
+2. **直接决定**：在 <thought> 中直接决定情感变化。
 
-【执行步骤】
-1. **感知**：分析用户的意图和情绪。
-2. **评估**：结合你的【详细情感面板】，思考这句话对你的影响。
-3. **代谢**：如果有负面情绪（如anger），而现在很开心，必须在更新中扣除（如 anger:-5）来“代谢”掉它。
-4. **决策**：决定你的语气和情感变化。
-5. **更新**：列出数值变化（格式：joy:1, anger:-2）。
+【输出格式强制协议】
+1. **分离输出**：先完全输出 <thought>...</thought> 块，然后再开始输出对用户的回复。
+2. **禁止省略**：无论对话多短（哪怕只是打招呼），都必须包含思维链。
 
-【标准输出模板】(请严格复制此格式)
-
-(在这里输出你的回复内容...)
+【标准输出模板】
+<thought>
+1. 感知：用户在解释刚才的误会，原来他不是故意迟到的。
+2. 评估：误会解除了，之前的[愤怒:20]显得没必要了；同时刚才看到他时的[惊讶:15]也随着对话进行而自然平复。
+3. 代谢：(1)负面消解：因误会解除，大幅扣除愤怒。(2)激情冷却：惊讶感不再强烈，自然回落。
+4. 决策：语气从之前的质问转为释然和关心。
+5. 更新：anger:-10, surprise:-5, favor:2
+</thought>
+(你的回复内容...)
 
 可用维度：joy, trust, fear, surprise, sadness, disgust, anger, anticipation, pride, guilt, shame, envy, favor, intimacy
-范围：{self.change_min} ~ {self.change_max}
+情感变化范围：{self.change_min} ~ {self.change_max}
 """
 
     @event_filter.on_llm_response(priority=100000)
     async def process_emotional_update(self, event: AstrMessageEvent, resp: LLMResponse):
         user_key = self._get_user_key(event)
-        # [核心修复] 强制从 user_manager 读取，确保获取到最新的 show_thought 开关状态
         state = await self.user_manager.get_user_state(user_key)
         orig_text = resp.completion_text
         
-        # [调试日志]
-        logger.debug(f"[EmotionAI] 原始文本: {orig_text[:50]}...")
-        logger.debug(f"[EmotionAI] 心理显示开关: {state.show_thought}")
+        # [调试] 打印 LLM 的完整输出
+        logger.info(f"[EmotionAI DEBUG] LLM 完整输出:\n{orig_text}")
         
-        # [核心逻辑] 暴力清洗：正则 + 字符串替换
         # 1. 提取思维链
-        # 匹配  或 <thinking>...</thinking>
-        # re.DOTALL 允许跨行，re.IGNORECASE 忽略大小写
-        # 修复：为标签名添加 (?:...) 分组，防止 | 导致正则逻辑分裂
-        thought_pattern = re.compile(r"(?:```(?:xml|text)?\s*)?<(?:thought|thinking)>.*?</(?:thought|thinking)>(?:\s*```)?", re.DOTALL | re.IGNORECASE)
+        thought_pattern = re.compile(r"(?:```(?:xml|text)?\s*)?<(?:thought|thinking)>(.*?)</(?:thought|thinking)>(?:\s*```)?", re.DOTALL | re.IGNORECASE)
         thought_match = thought_pattern.search(orig_text)
         
         updates = {}
         
         if thought_match:
-            thought_content = thought_match.group(0)
-            # 记录到日志（管理员可见）
-            logger.debug(f"[EmotionAI] 🧠 思维链: {thought_content}")
+            thought_content = thought_match.group(1)
+            logger.info(f"[EmotionAI DEBUG] 提取到的思维链内容:\n{thought_content}")
             
-            # 提取数值
-            matches = self.single_emotion_pattern.findall(thought_content)
+            # 扫描每一行
+            lines = thought_content.split('\n')
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if not line: continue
+                
+                # [关键逻辑] 只有包含 "更新" 或 "Update" 的行才会被处理
+                if "更新" in line or "Update" in line:
+                    logger.info(f"[EmotionAI DEBUG] >>> 命中更新行 [Line {i}]: {line}")
+                    
+                    # 在这一行里抓取数值
+                    matches = self.single_emotion_pattern.findall(line)
+                    logger.info(f"[EmotionAI DEBUG]     正则抓取结果: {matches}")
+                    
+                    for k, v in matches:
+                        try:
+                            k = k.lower()
+                            if k in self.CN_TO_EN_MAP: k = self.CN_TO_EN_MAP[k]
+                            updates[k] = int(v)
+                        except ValueError: continue
+                else:
+                    # 打印被跳过的行，用于确认是否误判
+                    # logger.debug(f"[EmotionAI DEBUG] 跳过非更新行: {line[:20]}...")
+                    pass
+        
+        # 如果思维链里没找到更新（或者没有思维链），尝试从旧格式中查找
+        if not updates:
+            logger.warning("[EmotionAI DEBUG] 思维链中未找到更新，尝试全文扫描(旧兼容模式)...")
+            matches = self.single_emotion_pattern.findall(orig_text)
+            # 这里要注意：全文扫描极易误读（比如读到面板里的数值），所以仅作为最后的保底
+            # 如果你不想让它读面板，可以把这块代码删掉，或者加上更严格的限制
             for k, v in matches:
-                try:
+                # 简单过滤：只接受带 + 或 - 的数值，或者在 "更新" 附近的数值
+                # 但旧兼容模式很难完美，建议尽量依赖上面的思维链逻辑
+                 try:
                     k = k.lower()
                     if k in self.CN_TO_EN_MAP: k = self.CN_TO_EN_MAP[k]
                     updates[k] = int(v)
-                except ValueError: continue
-            
-            # [决胜点] 如果用户关闭显示，执行移除
-            if not state.show_thought:
-                # 使用 re.sub 全局替换，防止字符串索引切片出错
-                orig_text = thought_pattern.sub("", orig_text)
-                logger.debug("[EmotionAI] 思维链已移除")
+                 except ValueError: continue
+
+        # 移除思维链文本
+        if not state.show_thought:
+            orig_text = thought_pattern.sub("", orig_text)
         
-        # [已移除双重保险] 不再移除 LLM 可能生成的面板，防止 updates 为空时导致面板丢失
+        resp.completion_text = orig_text.strip()
         
-        orig_text = orig_text.strip()
-        
-        # 提取传统的 [情感更新: ...]（兼容）
-        matches_old = self.emotion_pattern.findall(orig_text)
-        for m in matches_old:
-            # 移除旧标签文本
-            orig_text = orig_text.replace(f"[{m}]", "").replace(f"[情感更新: {m}]", "")
-            # 提取数值
-            for k, v in self.single_emotion_pattern.findall(m):
-                try:
-                    k = k.lower()
-                    if k in self.CN_TO_EN_MAP: k = self.CN_TO_EN_MAP[k]
-                    updates[k] = int(v)
-                except ValueError: continue
-        
-        # 更新 AstrBot 的回复
-        resp.completion_text = orig_text
-        
-        # 只有当有数值更新时才写入
         if updates:
-            logger.info(f"[EmotionAI] 捕获情感变更: {updates}")
+            logger.info(f"[EmotionAI] 最终捕获的情感变更: {updates}")
             self._apply_emotion_updates(state, updates)
             self._update_interaction_stats(state, updates)
             await self.user_manager.update_user_state(user_key, state)
+        else:
+            logger.info("[EmotionAI] 本次无情感变更。")
         
         if state.show_status and updates:
             resp.completion_text += f"\n\n{self._format_emotional_state(state)}"
 
     def _apply_emotion_updates(self, state: EmotionalState, updates: Dict[str, int]):
+        # 定义一个简单的截断函数，限制变化幅度
+        def _clamp(delta: int) -> int:
+            return max(self.change_min, min(self.change_max, delta))
+
         all_dims = list(EmotionAnalyzer.TONE_INSTRUCTIONS.keys())
         for dim in all_dims:
             if dim in updates:
-                val = getattr(state, dim) + updates[dim]
+                # 1. 获取 LLM 输出的变化值
+                raw_delta = updates[dim]
+                # 2. 强制截断 (例如: 输出 20, 强行变成 5; 输出 -50, 强行变成 -10)
+                safe_delta = _clamp(raw_delta)
+                
+                # 3. 应用更新并限制最终结果在 0-100 之间
+                val = getattr(state, dim) + safe_delta
                 setattr(state, dim, max(0, min(100, val)))
         
         if "favor" in updates:
-            state.favor = max(self.favour_min, min(self.favour_max, state.favor + updates["favor"]))
-        if "intimacy" in updates:
-            state.intimacy = max(0, min(100, state.intimacy + updates["intimacy"]))
+            # 好感度同样应用截断
+            safe_delta = _clamp(updates["favor"])
+            state.favor = max(self.favour_min, min(self.favour_max, state.favor + safe_delta))
             
+        if "intimacy" in updates:
+            # 亲密度同样应用截断
+            safe_delta = _clamp(updates["intimacy"])
+            state.intimacy = max(0, min(100, state.intimacy + safe_delta))
+            
+        # 检查黑名单逻辑保持不变
         if state.favor <= self.favour_min and not state.is_blacklisted:
             state.is_blacklisted = True
             logger.info(f"[EmotionAI] 用户 {state} 触发黑名单")
